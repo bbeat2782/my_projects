@@ -1,0 +1,110 @@
+import bs4
+import requests
+import sqlite3
+import os
+
+def pg_to_bs(url):
+  """
+    sdf
+  """
+  try:
+    webpage = requests.get(url)#, data=payload, headers=headers, params=params, allow_redirectes=True)
+    if webpage.status_code == 200:
+      webpage_bs = bs4.BeautifulSoup(webpage.content, 'html.parser')
+      print("Success")
+      return webpage_bs
+    elif webpage.status_code == 404:
+      print("Item has already been sold : "+url)
+      return False
+    else:
+      print(webpage.status_code+" "+url)
+      return False
+  except Exception as e:
+    print("requests does not work : "+url)
+    return False
+    
+    
+def extract_features(bs):
+  # need to change price to int
+  try:
+    price = bs.find("p", {"id": "article-price"}).text.strip()
+    price = int(price.replace("원","").replace(",",""))
+  except:
+    try:
+      # take care of cases when a post is about free sharing
+      price = bs.find("p", {"id": "article-price-nanum"}).text.strip()
+      price = -1
+    except:
+      # take care of cases when a post is a question
+      return None, None, None, None, None, None
+  
+  region = bs.find("div", {"id":"region-name"}).text
+  title = bs.find("h1", {"id": "article-title"}).text
+  cate_time_split_txt = "∙"
+  cate_time = bs.find("p", {"id": "article-category"}).text.split(cate_time_split_txt)
+  category = cate_time[0].strip()
+  # extracts how many minutes ago a post was uploaded
+  time = cate_time[1].strip().split("분")[0]
+  manner_split_txt = "°"
+  manner = float(bs.find("dd").text.split(manner_split_txt)[0].strip())
+  #detail = bs.find("div", {"id":"article-detail"}).text.replace('\n',' ').strip()
+
+
+
+  return region, title, category, price, manner, time
+  
+  
+def create_table(dir):
+  conn = sqlite3.connect(dir)
+  conn.execute('''
+    CREATE TABLE IF NOT EXISTS DanngnPage (
+      ArticleNum INTEGER PRIMARY KEY NOT NULL,
+      Region VARCHAR NOT NULL,
+      Title VARCHAR NOT NULL,
+      Category VARCHAR NOT NULL,
+      Price INTEGER NOT NULL,
+      Manner REAL NOT NULL
+    )
+  ''')
+  conn.commit()
+  conn.close()
+  
+  def scrape():
+  TradePages_dir = os.path.abspath(os.getcwd())+'/daangn_pg.db'
+  create_table(TradePages_dir)
+
+  count, time, incre, start_num = 0, "-1", 100, 377612683
+  base_url = "https://www.daangn.com/articles/"
+
+  conn = sqlite3.connect(TradePages_dir)
+  cursor = conn.execute('''
+    SELECT * FROM DanngnPage ORDER BY ArticleNum DESC LIMIT 1;
+  ''')
+  for r in cursor:
+    start_num = r[0]+50
+  conn.close()
+
+  conn = sqlite3.connect(TradePages_dir)
+  while str(time) != "1":
+    bs = pg_to_bs(base_url+str(start_num))
+    if not bs:
+      start_num += incre
+      continue
+    region, title, category, price, manner, time = extract_features(bs)
+    print(str(time))
+
+    if region is not None:
+      conn.execute("""
+        INSERT INTO DanngnPage VALUES(?, ?, ?, ?, ?, ?);
+      """, (start_num, region, title, category, price, manner))
+      count += 1
+    
+    start_num += incre
+    if count is 50:
+      conn.commit()
+      count = 0
+    
+  conn.commit()
+  conn.close()
+  
+  scrape()
